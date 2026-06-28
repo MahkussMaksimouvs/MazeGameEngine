@@ -1,4 +1,3 @@
-```html
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -19,6 +18,7 @@ body{
     padding:10px;
     display:flex;
     gap:8px;
+    flex-wrap: wrap;
 }
 
 button{
@@ -37,15 +37,18 @@ canvas{
 <body>
 
 <div id="toolbar">
+    <button onclick="currentTool='spawn'">Spawn Point</button>
     <button onclick="currentTool='wall'">Wall</button>
-<button onclick="currentTool='goal'">Goal</button>
-<button onclick="currentTool='key'">Key</button>
-<button onclick="currentTool='door'">Door</button>
-<button onclick="editorMode()">Editor</button>
-<button onclick="playMode()">Play</button>
-<button onclick="saveProject()">Save</button>
-<button onclick="loadProject()">Load</button>
-<button onclick="exportGame()">Export</button>
+    <button onclick="currentTool='goal'">Goal</button>
+    <button onclick="currentTool='key'">Key</button>
+    <button onclick="currentTool='door'">Door</button>
+    <button onclick="editorMode()">Editor</button>
+    <button onclick="playMode()">Play</button>
+    <button onclick="saveProject()">Save</button>
+    <button onclick="loadProject()">Load</button>
+    <button onclick="document.getElementById('audioInput').click()">Upload Audio</button>
+    <button onclick="exportGame()">Export</button>
+    <input type="file" id="audioInput" accept="audio/*" style="display:none;" onchange="handleAudioUpload(this)">
 </div>
 
 <canvas id="game" width="1000" height="600"></canvas>
@@ -61,9 +64,11 @@ let gameWon = false;
 let hasKey = false;
 
 const keys = {};
+let bgAudio = null;
 
 const project = {
-    objects:[]
+    objects:[],
+    audioData: null 
 };
 
 const player = {
@@ -74,8 +79,47 @@ const player = {
     speed:250
 };
 
+function handleAudioUpload(input) {
+    const file = input.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        project.audioData = e.target.result;
+        initAudioEngine();
+    };
+    reader.readAsDataURL(file);
+}
+
+function initAudioEngine() {
+    if (bgAudio) {
+        bgAudio.pause();
+    }
+    if (project.audioData) {
+        bgAudio = new Audio(project.audioData);
+        bgAudio.loop = true;
+        if (mode === "play") {
+            bgAudio.play().catch(()=>{});
+        }
+    }
+}
+
+function handleAudioState() {
+    if (!bgAudio) return;
+    if (mode === "play" && !gameWon) {
+        if (bgAudio.paused) {
+            bgAudio.play().catch(()=>{});
+        }
+    } else {
+        if (!bgAudio.paused) {
+            bgAudio.pause();
+        }
+    }
+}
+
 window.addEventListener("keydown",e=>{
     keys[e.key.toLowerCase()] = true;
+    handleAudioState();
 });
 
 window.addEventListener("keyup",e=>{
@@ -87,6 +131,7 @@ canvas.addEventListener("contextmenu",e=>{
 });
 
 canvas.addEventListener("mousedown",e=>{
+    handleAudioState();
 
     if(mode !== "editor") return;
 
@@ -101,14 +146,17 @@ canvas.addEventListener("mousedown",e=>{
     ) * 40;
 
     if(e.button === 0){
+        if(currentTool === "spawn") {
+            project.objects = project.objects.filter(obj => obj.type !== "spawn");
+        }
 
         project.objects.push({
-    type:currentTool,
-    x,
-    y,
-    width:40,
-    height:40
-});
+            type:currentTool,
+            x,
+            y,
+            width:40,
+            height:40
+        });
 
     }
 
@@ -125,16 +173,25 @@ canvas.addEventListener("mousedown",e=>{
 
 function editorMode(){
     mode = "editor";
+    handleAudioState();
 }
 
 function playMode(){
 
     mode = "play";
-	 gameWon = false;
+    gameWon = false;
     hasKey = false;
 
-    player.x = 100;
-    player.y = 100;
+    const spawnPoint = project.objects.find(obj => obj.type === "spawn");
+    if(spawnPoint) {
+        player.x = spawnPoint.x + 5; 
+        player.y = spawnPoint.y + 5;
+    } else {
+        player.x = 100;
+        player.y = 100;
+    }
+    
+    handleAudioState();
 
 }
 
@@ -198,8 +255,10 @@ async function loadProject(){
         const data =
             JSON.parse(text);
 
-        project.objects =
-            data.objects || [];
+        project.objects = data.objects || [];
+        project.audioData = data.audioData || null;
+
+        initAudioEngine();
 
         alert("Project loaded!");
 
@@ -250,6 +309,9 @@ const ctx =
 canvas.getContext("2d");
 
 const keys = {};
+let hasKey = false;
+let bgAudio = null;
+let gameWon = false;
 
 const player = {
     x:100,
@@ -259,12 +321,40 @@ const player = {
     speed:250
 };
 
+const spawnPoint = project.objects.find(obj => obj.type === "spawn");
+if(spawnPoint) {
+    player.x = spawnPoint.x + 5;
+    player.y = spawnPoint.y + 5;
+}
+
+function startMusic() {
+    if (gameWon) return;
+    if (project.audioData && !bgAudio) {
+        bgAudio = new Audio(project.audioData);
+        bgAudio.loop = true;
+        bgAudio.play().catch(()=>{});
+    } else if (bgAudio && bgAudio.paused) {
+        bgAudio.play().catch(()=>{});
+    }
+}
+
+function stopMusic() {
+    if (bgAudio && !bgAudio.paused) {
+        bgAudio.pause();
+    }
+}
+
 window.addEventListener("keydown",e=>{
     keys[e.key.toLowerCase()] = true;
+    startMusic();
 });
 
 window.addEventListener("keyup",e=>{
     keys[e.key.toLowerCase()] = false;
+});
+
+canvas.addEventListener("mousedown", () => {
+    startMusic();
 });
 
 function intersects(a,b){
@@ -278,7 +368,19 @@ function intersects(a,b){
 
 }
 
+function resetPlayer() {
+    const spawn = project.objects.find(obj => obj.type === "spawn");
+    if(spawn) {
+        player.x = spawn.x + 5;
+        player.y = spawn.y + 5;
+    } else {
+        player.x = 100;
+        player.y = 100;
+    }
+}
+
 function update(dt){
+    if (gameWon) return;
 
     let mx = 0;
     let my = 0;
@@ -339,10 +441,15 @@ function update(dt){
         obj.type === "goal" &&
         intersects(player,obj)
     ){
-        alert("YOU WIN!");
-
-        player.x = 100;
-        player.y = 100;
+        gameWon = true;
+        stopMusic();
+        
+        setTimeout(() => {
+            alert("YOU WIN!");
+            gameWon = false;
+            resetPlayer();
+            startMusic();
+        }, 50);
     }
 
 }
@@ -378,6 +485,10 @@ function draw(){
             ctx.fillStyle = "brown";
             break;
 
+        case "spawn":
+            ctx.fillStyle = "cyan";
+            break;
+
         default:
             ctx.fillStyle = "red";
     }
@@ -399,6 +510,11 @@ function draw(){
         player.height
     );
 
+    if (project.audioData && (!bgAudio || bgAudio.paused) && !gameWon) {
+        ctx.fillStyle = "rgba(255,255,255,0.7)";
+        ctx.font = "16px Arial";
+        ctx.fillText("Press any key or click canvas to activate level music!", 10, canvas.height - 20);
+    }
 }
 
 let last = 0;
@@ -454,6 +570,17 @@ function intersects(a,b){
         a.y + a.height > b.y
     );
 
+}
+
+function resetPlayerEngine() {
+    const spawnPoint = project.objects.find(obj => obj.type === "spawn");
+    if(spawnPoint) {
+        player.x = spawnPoint.x + 5;
+        player.y = spawnPoint.y + 5;
+    } else {
+        player.x = 100;
+        player.y = 100;
+    }
 }
 
 function update(dt){
@@ -520,9 +647,8 @@ function update(dt){
         intersects(player,obj)
     ){
         gameWon = true;
-
-        player.x = 100;
-        player.y = 100;
+        resetPlayerEngine();
+        handleAudioState();
 
         setTimeout(() => {
             alert("YOU WIN!");
@@ -566,7 +692,7 @@ function draw(){
         canvas.height
     );
 
-   drawGrid();
+    drawGrid();
 
 for(const obj of project.objects){
 
@@ -581,6 +707,9 @@ for(const obj of project.objects){
     }
     else if(obj.type === "door"){
         ctx.fillStyle = "brown";
+    }
+    else if(obj.type === "spawn"){
+        ctx.fillStyle = "cyan";
     }
     else{
         ctx.fillStyle = "red";
@@ -608,9 +737,16 @@ for(const obj of project.objects){
     }
 
     ctx.fillStyle = "white";
+    ctx.font = "10px sans-serif";
     ctx.fillText("Mode: " + mode,10,20);
     ctx.fillText("Left Click = Place Block",10,40);
     ctx.fillText("Right Click = Delete Block",10,60);
+
+    if (project.audioData && mode === "play" && (!bgAudio || bgAudio.paused) && !gameWon) {
+        ctx.fillStyle = "rgba(255,255,255,0.7)";
+        ctx.font = "14px Arial";
+        ctx.fillText("Press any key or click canvas to activate music!", 10, canvas.height - 20);
+    }
 
 }
 
@@ -636,4 +772,3 @@ requestAnimationFrame(loop);
 
 </body>
 </html>
-```
